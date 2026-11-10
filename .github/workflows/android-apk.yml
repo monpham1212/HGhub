@@ -22,10 +22,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout upstream source (v1.2.1)
+      # Checkout the FORK's own v1.2.1 tag (same code as upstream v1.2.1).
+      # Do NOT check out Minireel/HGhub directly: upstream currently has no
+      # v1.2.1 tag, so that fetch fails. The fork keeps the tag.
+      - name: Checkout source (v1.2.1)
         uses: actions/checkout@v4
         with:
-          repository: Minireel/HGhub
           ref: v1.2.1
 
       - uses: pnpm/action-setup@v4
