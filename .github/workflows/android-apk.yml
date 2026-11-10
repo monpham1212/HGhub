@@ -1,0 +1,101 @@
+# Build HGhub Android debug APK (arm64-v8a only) from upstream Minireel/HGhub v1.2.1.
+# Trigger: manual (Actions tab -> Run workflow) or any push that touches this file.
+# No keystore/secrets needed: a debug build is auto-signed by Gradle with the debug key.
+# The finished APK is published as a GitHub Release on THIS repo (tag android-debug-r<N>).
+
+name: Android APK (debug, arm64)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-apk.yml'
+
+env:
+  CI: "true"
+
+jobs:
+  android-debug:
+    name: Android debug APK (arm64-v8a)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout upstream source (v1.2.1)
+        uses: actions/checkout@v4
+        with:
+          repository: Minireel/HGhub
+          ref: v1.2.1
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # ubuntu runner already ships an Android SDK; install the exact
+      # platform / build-tools / NDK versions the upstream release.yml uses.
+      - name: Prepare Android SDK / NDK
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SDKM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          echo "NDK_HOME=$SDK/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          ls "$SDK/ndk"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: android
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate Android project
+        run: pnpm tauri android init --ci
+
+      - name: Build debug APK (arm64)
+        run: pnpm tauri android build --apk --debug --target aarch64
+
+      - name: Collect APK
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          found="$(find src-tauri/gen/android/app/build/outputs/apk -name '*-debug.apk' | head -1)"
+          if [ -z "$found" ]; then
+            echo "::error::no debug APK found"
+            find src-tauri/gen/android/app/build/outputs -name '*.apk' -o -name '*.aab' | head
+            exit 1
+          fi
+          cp "$found" "artifacts/HGhub_1.2.1_arm64-v8a_debug.apk"
+          ls -lh artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HGhub-android-arm64-debug
+          path: artifacts/*
+          if-no-files-found: error
+
+      - name: Publish release on this repo
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-debug-r${{ github.run_number }}
+          name: HGhub v1.2.1 Android debug (arm64)
+          body: |
+            Debug APK built from upstream Minireel/HGhub v1.2.1 (single ABI arm64-v8a).
+            Debug-signed by Gradle — sideload it, no keystore needed.
+          files: artifacts/*
+          fail_on_unmatched_files: true
